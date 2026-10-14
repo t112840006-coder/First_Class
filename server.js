@@ -30,7 +30,10 @@ const PROMPT = `你是會議與課堂筆記助手。根據以下逐字稿（可�
 ## 待辦事項
 - [ ] ...（沒有就寫「無」）
 
-只輸出 Markdown，不要加任何說明。不要編造逐字稿沒有的內容。`;
+最前面先輸出一行中繼資料（單獨一行，不要放進程式碼區塊）：
+<!--meta {"type":"課堂|會議|其他","topic":"科目或主題，10字內","tags":["3到5個關鍵字"]}-->
+
+只輸出以上內容，不要加任何說明。不要編造逐字稿沒有的內容。`;
 
 async function summarize(transcript) {
   if (!ANTHROPIC_API_KEY) throw new Error('伺服器沒有設定 ANTHROPIC_API_KEY');
@@ -50,6 +53,13 @@ async function summarize(transcript) {
   const j = await r.json();
   if (!r.ok) throw new Error(j.error?.message || `Anthropic API ${r.status}`);
   return j.content.filter(b => b.type === 'text').map(b => b.text).join('');
+}
+
+function parseMeta(text) {
+  const m = text.match(/<!--meta\s*(\{[\s\S]*?\})\s*-->/);
+  let meta = {};
+  try { if (m) meta = JSON.parse(m[1]); } catch {}
+  return { meta, summary: text.replace(/<!--meta[\s\S]*?-->\s*/, '').trim() };
 }
 
 // ---- Markdown -> Notion blocks ----
@@ -89,7 +99,30 @@ async function notion(method, url, body) {
   return j;
 }
 
-async function saveToNotion({ title, summary, transcript }) {
+const DB_FILE = path.join(__dirname, '.notion-db');
+let dbId = process.env.NOTION_DATABASE_ID || (fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8').trim() : '');
+
+// 第一次存檔時，自動在 NOTION_PARENT_PAGE_ID 底下建立「筆記知識庫」資料庫
+async function ensureDb() {
+  if (dbId) return dbId;
+  const db = await notion('POST', '/databases', {
+    parent: { type: 'page_id', page_id: NOTION_PARENT_PAGE_ID },
+    title: rt('筆記知識庫'),
+    properties: {
+      '名稱': { title: {} },
+      '日期': { date: {} },
+      '類型': { select: { options: [{ name: '課堂' }, { name: '會議' }, { name: '其他' }] } },
+      '主題': { rich_text: {} },
+      '標籤': { multi_select: {} },
+      '摘要': { rich_text: {} },
+    },
+  });
+  dbId = db.id;
+  fs.writeFileSync(DB_FILE, dbId);
+  return dbId;
+}
+
+async function saveToNotion({ title, summary, transcript, meta = {} }) {
   if (!NOTION_TOKEN || !NOTION_PARENT_PAGE_ID) throw new Error('伺服器沒有設定 NOTION_TOKEN / NOTION_PARENT_PAGE_ID');
   const blocks = [
     ...mdToBlocks(summary).filter((b, i) => !(i === 0 && b.type === 'heading_1')),
@@ -97,9 +130,18 @@ async function saveToNotion({ title, summary, transcript }) {
     { type: 'heading_2', heading_2: { rich_text: rt('完整逐字稿') } },
     ...chunks(transcript).map(c => ({ type: 'paragraph', paragraph: { rich_text: rt(c) } })),
   ];
+  const overview = (summary.match(/##\s*摘要\s*\n+([\s\S]*?)(?=\n##|$)/) || [])[1]?.trim() || '';
+  const type = ['課堂', '會議', '其他'].includes(meta.type) ? meta.type : '其他';
   const page = await notion('POST', '/pages', {
-    parent: { page_id: NOTION_PARENT_PAGE_ID },
-    properties: { title: { title: rt(title) } },
+    parent: { database_id: await ensureDb() },
+    properties: {
+      '名稱': { title: rt(title) },
+      '日期': { date: { start: new Date().toISOString() } },
+      '類型': { select: { name: type } },
+      '主題': { rich_text: rt(meta.topic || '') },
+      '標籤': { multi_select: (meta.tags || []).slice(0, 8).map(t => ({ name: String(t).replace(/,/g, ' ').slice(0, 50) })) },
+      '摘要': { rich_text: rt(overview) },
+    },
     children: blocks.slice(0, 100),
   });
   for (let i = 100; i < blocks.length; i += 100)
@@ -124,11 +166,11 @@ http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/summarize') {
       const { transcript } = await readJson(req);
       if (!transcript?.trim()) return send(400, { error: '沒有逐字稿' });
-      return send(200, { summary: await summarize(transcript) });
+      return send(200, parseMeta(await summarize(transcript)));
     }
     if (req.method === 'POST' && req.url === '/api/notion') {
-      const { title, summary, transcript } = await readJson(req);
-      return send(200, { url: await saveToNotion({ title: title || '未命名筆記', summary: summary || '', transcript: transcript || '' }) });
+      const { title, summary, transcript, meta } = await readJson(req);
+      return send(200, { url: await saveToNotion({ title: title || '未命名筆記', summary: summary || '', transcript: transcript || '', meta }) });
     }
     if (req.method === 'GET') {
       const file = path.join(PUBLIC, req.url === '/' ? 'index.html' : path.normalize(req.url.split('?')[0]));

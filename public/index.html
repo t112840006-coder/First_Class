@@ -79,7 +79,7 @@
 const $ = id => document.getElementById(id);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const KEY = 'firstclass.transcript';
-let rec, listening = false, wake = null, summaryMd = '';
+let rec, listening = false, wake = null, summaryMd = '', metaObj = {};
 
 const store = {
   get: () => { try { return localStorage.getItem(KEY) || ''; } catch { return ''; } },
@@ -167,7 +167,7 @@ async function organize() {
   setStatus('整理中…', false);
   $('saved').textContent = '';
   try {
-    summaryMd = (await api('/api/summarize', { transcript })).summary;
+    ({ summary: summaryMd, meta: metaObj } = await api('/api/summarize', { transcript }));
     $('summary').innerHTML = render(summaryMd);
     $('title').value = (summaryMd.match(/^#\s+(.*)/m) || [])[1] || '';
     $('out').hidden = false;
@@ -182,7 +182,7 @@ $('save').onclick = async () => {
   $('saved').textContent = '儲存中…';
   $('saved').classList.remove('err');
   try {
-    const { url } = await api('/api/notion', { title: $('title').value, summary: summaryMd, transcript: $('transcript').value });
+    const { url } = await api('/api/notion', { title: $('title').value, summary: summaryMd, transcript: $('transcript').value, meta: metaObj });
     $('saved').innerHTML = '';
     const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.textContent = '已存入 Notion，點此開啟';
     $('saved').append(a);
