@@ -2,7 +2,10 @@
 
 網頁 App：用瀏覽器聆聽會議或上課，結束後用 Claude 整理成摘要、重點、資料、待辦，並存到 Notion。
 
-## 啟動
+## 啟動（Windows 最簡單）
+安裝 Node.js 後，雙擊 `安裝.bat` 照指示貼上三個金鑰，之後每次雙擊 `開始使用.bat` 即可。
+
+## 啟動（手動）
 1. 安裝 Node 18+
 2. `cp .env.example .env`，填入：
    - `ANTHROPIC_API_KEY`
