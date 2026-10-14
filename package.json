@@ -1,0 +1,9 @@
+{
+  "name": "first-class",
+  "version": "0.1.0",
+  "private": true,
+  "description": "錄下會議/上課內容，自動整理並存到 Notion",
+  "type": "module",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
